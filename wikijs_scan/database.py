@@ -1,6 +1,6 @@
 """只读加载 Wiki.js 3.0.2 的页面正文、资源元数据和显式目录。
 
-流程：在一个 REPEATABLE READ、READ ONLY 事务中读取 sites/pages/tree/assets，
+流程：在一个 REPEATABLE READ、READ ONLY 事务中读取配置 schema 下的 sites/pages/tree/assets，
 验证单站点、en 语言和 Markdown 页面前提，再将 tree.folderPath 的逐段 UTF-8
 十六进制编码还原为路径。页面统一附加 .md，空目录保留；不读取媒体 data/preview，
 不访问文件缓存或存储目标，不修改数据库，也不让各 scan 自行发起 SQL。
@@ -24,19 +24,20 @@ class DatabaseError(ValueError):
     """数据库连接、结构或方案前提不满足，无法得到完整扫描快照。"""
 
 
-SITE_SQL = 'SELECT id FROM public.sites ORDER BY id'
+# schema 必须通过 psycopg.sql.Identifier 填入，不能直接拼接配置字符串。
+SITE_SQL = 'SELECT id FROM {schema}.sites ORDER BY id'
 PAGE_SQL = '''
     SELECT id, path, title, content, "contentType" AS content_type, locale
-    FROM public.pages WHERE "siteId" = %s ORDER BY path, id
+    FROM {schema}.pages WHERE "siteId" = %s ORDER BY path, id
 '''
 TREE_SQL = '''
     SELECT id, "folderPath"::text AS folder_path, "fileName" AS file_name,
            "tree"::text AS kind, locale, title
-    FROM public.tree WHERE "siteId" = %s ORDER BY "folderPath", "fileName", id
+    FROM {schema}.tree WHERE "siteId" = %s ORDER BY "folderPath", "fileName", id
 '''
 ASSET_SQL = '''
     SELECT id, "fileName" AS file_name, "fileSize" AS file_size
-    FROM public.assets WHERE "siteId" = %s ORDER BY id
+    FROM {schema}.assets WHERE "siteId" = %s ORDER BY id
 '''
 
 
@@ -169,11 +170,13 @@ def snapshot_from_rows(
 def load_snapshot(database: Mapping[str, Any]) -> Snapshot:
     """只执行 SELECT；连接上下文负责在任何异常情况下关闭事务与连接。"""
     import psycopg
-    from psycopg import IsolationLevel
+    from psycopg import IsolationLevel, sql
     from psycopg.rows import dict_row
 
     connection_keys = ("host", "port", "dbname", "user", "password", "connect_timeout", "sslmode")
     kwargs = {key: database[key] for key in connection_keys if key in database}
+    schema = database.get("schema", "wiki")
+    schema_identifier = sql.Identifier(schema)
     try:
         with psycopg.connect(**kwargs, row_factory=dict_row) as connection:
             connection.read_only = True
@@ -181,20 +184,25 @@ def load_snapshot(database: Mapping[str, Any]) -> Snapshot:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT set_config('statement_timeout', %s, true)",
                                (str(database.get("statement_timeout_ms", 30000)),))
-                cursor.execute(SITE_SQL)
+                cursor.execute(sql.SQL(SITE_SQL).format(schema=schema_identifier))
                 sites = cursor.fetchall()
                 if len(sites) != 1:
                     raise DatabaseError(f"只支持一个站点，数据库中实际有 {len(sites)} 个")
                 site_id = sites[0]["id"]
-                cursor.execute(PAGE_SQL, (site_id,))
+                cursor.execute(sql.SQL(PAGE_SQL).format(schema=schema_identifier), (site_id,))
                 pages = cursor.fetchall()
-                cursor.execute(TREE_SQL, (site_id,))
+                cursor.execute(sql.SQL(TREE_SQL).format(schema=schema_identifier), (site_id,))
                 tree = cursor.fetchall()
-                cursor.execute(ASSET_SQL, (site_id,))
+                cursor.execute(sql.SQL(ASSET_SQL).format(schema=schema_identifier), (site_id,))
                 assets = cursor.fetchall()
                 return snapshot_from_rows(pages, tree, assets)
     except psycopg.Error as exc:
         message = str(exc)
+        if isinstance(exc, (psycopg.errors.UndefinedTable, psycopg.errors.InvalidSchemaName)):
+            message += (
+                f"\n请检查 global.database.dbname 和 global.database.schema（当前 schema：{schema!r}）。"
+                "schema 应与原 Wiki.js 的 db.schema 一致，且包含 sites、pages、tree、assets 表。"
+            )
         password = database.get("password")
         if isinstance(password, str) and password:
             message = message.replace(password, "***")

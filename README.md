@@ -15,6 +15,29 @@ python -m pip install -r requirements.txt
 
 编辑本目录的 `config.json`，将 `global.database` 设置为恢复后的数据库连接信息。
 示例默认地址为 `127.0.0.1:55432`、数据库 `wiki`、用户 `wikijs`；密码需要填写备份中原有的密码。
+`global.database.schema` 默认是 `wiki`，须与原 Wiki.js 配置的 `db.schema` 一致。
+`dbname` 是数据库名，`schema` 是该数据库内存放表的命名空间，两者可以不同。
+例如原库的表在 `public` 下，就将 `schema` 改为 `public`；自定义名称按原样填写。
+这个默认值对应 [Wiki.js 3.0.2 的示例配置](https://github.com/requarks/wiki/blob/3.0.2/config.sample.yml#L16-L23)。
+
+同一台机器上使用本工具恢复的数据库时，连接配置示例为：
+
+```json
+"database": {
+  "host": "127.0.0.1",
+  "port": 55432,
+  "dbname": "wiki",
+  "schema": "wiki",
+  "user": "wikijs",
+  "password": "备份数据库原来的密码",
+  "connect_timeout": 10,
+  "statement_timeout_ms": 30000,
+  "sslmode": "prefer"
+}
+```
+
+数据库在另一台机器上时，`host` 填那台机器的可访问地址，`port` 填实际开放的端口。
+已恢复成功的数据库只需修改连接配置，无须重新恢复备份。
 
 ```bash
 python main.py
@@ -65,8 +88,8 @@ python restore_database.py /path/to/wiki-prod_db-data.tar.gz
 
 `global` 包含数据库连接、恢复参数、`scan_order`、`IMAGES_DIR`、`DOCS_DIR` 和 `external_prefixes`。
 目录设置是**单级名称**，不带 `/`，默认分别为 `images`、`docs`。
-数据库连接支持 `host`、`port`、`dbname`、`user`、`password`、`sslmode`、`connect_timeout`（秒）和
-`statement_timeout_ms`（每条查询的超时毫秒数）。
+数据库配置支持 `host`、`port`、`dbname`、`schema`（默认 `wiki`）、`user`、`password`、`sslmode`、
+`connect_timeout`（秒）和 `statement_timeout_ms`（每条查询的超时毫秒数）。
 
 每个 scan 的配置形状相同，例如：
 
@@ -164,7 +187,10 @@ grid 使用安全 YAML 解析，非空但格式错误、不是列表或缺少字
 ## 数据与边界
 
 数据库适配使用显式列选择，在一个 `READ ONLY / REPEATABLE READ` 事务中加载
-`sites`、`pages`、`tree`、`assets`。页面正文来自 `pages.content`，目录由 tree 显式记录构建，
+`global.database.schema` 指定的 `sites`、`pages`、`tree`、`assets`。schema 名按 SQL 标识符安全引用，
+不依赖连接的 `search_path`，也不会在目标表缺失时自动改读其他 schema。
+遇到表不存在错误时，检查数据库名和 schema 是否与恢复的原库一致。
+页面正文来自 `pages.content`，目录由 tree 显式记录构建，
 `folderPath` 的每级十六进制编码先还原为 UTF-8。页面路径统一追加逻辑 `.md` 后缀。
 上传资源保持 Asset 身份，即使其后缀为 `.md`，也不会读取媒体正文。
 
@@ -222,5 +248,5 @@ python tests/integration_postgres.py
 ```
 
 此测试只创建随机命名的测试容器和卷，使用官方 PG18 镜像，验证真实 SQL、
-禁止读取媒体列的账号权限、全部 scan、停库备份与恢复后的快照一致性。
+`wiki` 与自定义 schema、禁止读取媒体列的账号权限、全部 scan、停库备份与恢复后的快照一致性。
 结束后清理本次测试资源；不使用 `config.json` 中的数据库连接，不接触已有数据库。

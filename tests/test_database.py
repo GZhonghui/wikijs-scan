@@ -114,6 +114,8 @@ class FakeConnection:
     def execute(self, sql, params=None):
         if not self.read_only or self.isolation_level is None:
             raise AssertionError("transaction must be read-only before the first query")
+        if not isinstance(sql, str):
+            sql = sql.as_string()
         self.queries.append((sql, params))
 
     def fetchall(self):
@@ -133,11 +135,51 @@ class DatabaseConnectionTests(unittest.TestCase):
         self.assertEqual(connection.isolation_level, IsolationLevel.REPEATABLE_READ)
         self.assertEqual(connection.queries[0][1], ("1234",))
         self.assertEqual([query for query, _ in connection.queries[1:]],
-                         [SITE_SQL, PAGE_SQL, TREE_SQL, ASSET_SQL])
+                         [query.format(schema='"wiki"')
+                          for query in (SITE_SQL, PAGE_SQL, TREE_SQL, ASSET_SQL)])
         self.assertNotIn("statement_timeout_ms", connect.call_args.kwargs)
         self.assertNotIn("*", ASSET_SQL)
         self.assertNotIn("data", ASSET_SQL.lower())
         self.assertNotIn("preview", ASSET_SQL.lower())
+
+    def test_all_tables_use_the_exact_configured_schema(self):
+        cases = [
+            ({}, '"wiki"'),
+            ({"schema": "wiki"}, '"wiki"'),
+            ({"schema": "public"}, '"public"'),
+            ({"schema": "custom_wiki"}, '"custom_wiki"'),
+            ({"schema": "Mixed.Case"}, '"Mixed.Case"'),
+            ({"schema": 'wiki"; SELECT 1; --'}, '"wiki""; SELECT 1; --"'),
+            ({"schema": "资料"}, '"资料"'),
+        ]
+        for database, quoted_schema in cases:
+            with self.subTest(database=database):
+                connection = FakeConnection([[{"id": "site"}], [], [], []])
+                with patch("psycopg.connect", return_value=connection) as connect:
+                    load_snapshot(database)
+                self.assertNotIn("schema", connect.call_args.kwargs)
+                queries = connection.queries[1:]
+                self.assertEqual(len(queries), 4)
+                for (query, params), table in zip(queries, ("sites", "pages", "tree", "assets")):
+                    self.assertIn(f"FROM {quoted_schema}.{table}", query)
+                    self.assertEqual(params, None if table == "sites" else ("site",))
+
+    def test_missing_tables_explain_schema_configuration_and_close_connection(self):
+        import psycopg
+
+        for error_type in (psycopg.errors.UndefinedTable, psycopg.errors.InvalidSchemaName):
+            with self.subTest(error_type=error_type):
+                connection = FakeConnection([])
+                with patch("psycopg.connect", return_value=connection), \
+                        patch.object(connection, "execute", side_effect=[None, error_type("missing secret-value")]), \
+                        self.assertRaises(DatabaseError) as raised:
+                    load_snapshot({"schema": "custom_wiki", "password": "secret-value"})
+                message = str(raised.exception)
+                self.assertIn("global.database.schema", message)
+                self.assertIn("global.database.dbname", message)
+                self.assertIn("custom_wiki", message)
+                self.assertNotIn("secret-value", message)
+                self.assertTrue(connection.closed)
 
     def test_site_count_is_a_hard_precondition(self):
         for sites in ([], [{"id": "a"}, {"id": "b"}]):

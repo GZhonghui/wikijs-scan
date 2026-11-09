@@ -33,10 +33,30 @@ class ConfigurationTests(unittest.TestCase):
         for scan_id in ("reference_targets", "orphan_files", "connectivity"):
             self.assertEqual(specs[scan_id].depends_on, ("reference_format",))
         self.assertTrue(all(not spec.filter.enabled for spec in config.scans))
+        self.assertEqual(config.database["schema"], "wiki")
         self.assertEqual(FILTER_FORBIDDEN, {
             "inventory", "resource_size", "duplicate_sizes", "forbidden_patterns",
             "reference_format", "resource_folders",
         })
+
+    def test_database_schema_defaults_to_wiki_when_omitted(self):
+        config = parse_config(minimal_config("inventory"))
+        self.assertEqual(config.database["schema"], "wiki")
+
+    def test_database_schema_preserves_explicit_names(self):
+        for schema in ("public", "custom_wiki", "Mixed.Case", 'wiki"quoted', "资料"):
+            with self.subTest(schema=schema):
+                raw = minimal_config("inventory")
+                raw["global"]["database"]["schema"] = schema
+                self.assertEqual(parse_config(raw).database["schema"], schema)
+
+    def test_database_schema_rejects_invalid_values(self):
+        for schema in (None, "", "wiki\0other", False, 1, [], {}):
+            with self.subTest(schema=schema):
+                raw = minimal_config("inventory")
+                raw["global"]["database"]["schema"] = schema
+                with self.assertRaisesRegex(ValueError, r"global\.database\.schema"):
+                    parse_config(raw)
 
     def test_execution_order_is_preserved_even_when_dependencies_are_later_or_cyclic(self):
         raw = minimal_config("resource_size", "inventory")

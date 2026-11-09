@@ -67,10 +67,10 @@ def _database(value: object) -> dict:
     defaults = {
         "host": "127.0.0.1", "port": 55432, "dbname": "wiki", "user": "wikijs",
         "password": "", "connect_timeout": 10, "statement_timeout_ms": 30000,
-        "sslmode": "prefer",
+        "sslmode": "prefer", "schema": "wiki",
     }
     data = defaults | _object(value, "global.database", set(defaults))
-    for key in ("host", "dbname", "user", "sslmode"):
+    for key in ("host", "dbname", "user", "sslmode", "schema"):
         if not isinstance(data[key], str) or not data[key] or "\0" in data[key]:
             raise ValueError(f"global.database.{key} 必须是非空字符串")
     if not isinstance(data["password"], str) or "\0" in data["password"]:

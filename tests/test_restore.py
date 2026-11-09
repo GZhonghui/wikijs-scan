@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from wikijs_scan.restore import (
     RESTORE_DEFAULTS, RestoreError, _ensure_empty_volume, _ensure_image, _inspect,
-    _wait_for_database, restore_database, validate_archive, validate_restore_config,
+    _verify_connection, _wait_for_database, restore_database, validate_archive, validate_restore_config,
 )
 
 
@@ -188,6 +188,15 @@ class RestoreTests(TemporaryArchiveCase):
             _wait_for_database(RESTORE_DEFAULTS, DATABASE)
         self.assertIn("pg_isready", docker.call_args.args[0])
         verify.assert_called_once_with(DATABASE)
+
+    def test_connection_check_accepts_schema_without_passing_it_to_psycopg(self):
+        database = dict(DATABASE, schema="custom_wiki", statement_timeout_ms=30000)
+        with patch("psycopg.connect") as connect:
+            _verify_connection(database)
+        connect.assert_called_once_with(**DATABASE)
+        connection = connect.return_value.__enter__.return_value
+        self.assertTrue(connection.read_only)
+        connection.execute.assert_called_once_with("SELECT 1")
 
     def test_wrong_credentials_fail_without_exposing_password(self):
         with patch("wikijs_scan.restore._docker", return_value=completed()), \

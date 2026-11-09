@@ -4,6 +4,7 @@
       "host": "127.0.0.1",
       "port": 55432,
       "dbname": "wiki",
+      "schema": "wiki",
       "user": "wikijs",
       "password": "",
       "connect_timeout": 10,
@@ -21,34 +22,157 @@
     },
     "IMAGES_DIR": "images",
     "DOCS_DIR": "docs",
-    "external_prefixes": ["http", "mailto"],
+    "external_prefixes": [
+      "http",
+      "mailto"
+    ],
     "scan_order": [
-      "inventory", "resource_location", "resource_size", "duplicate_sizes",
-      "naming", "forbidden_patterns", "reference_format", "reference_targets",
-      "orphan_files", "connectivity", "folder_index", "resource_folders"
+      "inventory",
+      "resource_location",
+      "resource_size",
+      "duplicate_sizes",
+      "naming",
+      "forbidden_patterns",
+      "reference_format",
+      "reference_targets",
+      "orphan_files",
+      "connectivity",
+      "folder_index",
+      "resource_folders"
     ]
   },
   "scans": {
-    "inventory": {"enabled": true, "depends_on": [], "filter": {"enabled": false, "prefixes": []}, "options": {}},
+    "inventory": {
+      "enabled": true,
+      "depends_on": [],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {}
+    },
     "resource_location": {
-      "enabled": true, "depends_on": [], "filter": {"enabled": false, "prefixes": []},
-      "options": {"image_extensions": ["png", "svg", "jpg", "jpeg", "gif", "webp"]}
+      "enabled": true,
+      "depends_on": [],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {
+        "image_extensions": [
+          "png",
+          "svg",
+          "jpg",
+          "jpeg",
+          "gif",
+          "webp"
+        ]
+      }
     },
     "resource_size": {
-      "enabled": true, "depends_on": [], "filter": {"enabled": false, "prefixes": []},
-      "options": {"max_bytes": 1048576}
+      "enabled": true,
+      "depends_on": [],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {
+        "max_bytes": 1048576
+      }
     },
-    "duplicate_sizes": {"enabled": true, "depends_on": [], "filter": {"enabled": false, "prefixes": []}, "options": {}},
-    "naming": {"enabled": true, "depends_on": [], "filter": {"enabled": false, "prefixes": []}, "options": {}},
+    "duplicate_sizes": {
+      "enabled": true,
+      "depends_on": [],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {}
+    },
+    "naming": {
+      "enabled": true,
+      "depends_on": [],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {}
+    },
     "forbidden_patterns": {
-      "enabled": true, "depends_on": [], "filter": {"enabled": false, "prefixes": []},
-      "options": {"patterns": ["DOKU2MD_REVIEW", "\\[\\[[\\s\\S]*?\\]\\]"]}
+      "enabled": true,
+      "depends_on": [],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {
+        "patterns": [
+          "DOKU2MD_REVIEW",
+          "\\[\\[[\\s\\S]*?\\]\\]"
+        ]
+      }
     },
-    "reference_format": {"enabled": true, "depends_on": ["inventory"], "filter": {"enabled": false, "prefixes": []}, "options": {}},
-    "reference_targets": {"enabled": true, "depends_on": ["reference_format"], "filter": {"enabled": false, "prefixes": []}, "options": {}},
-    "orphan_files": {"enabled": true, "depends_on": ["reference_format"], "filter": {"enabled": false, "prefixes": []}, "options": {}},
-    "connectivity": {"enabled": true, "depends_on": ["reference_format"], "filter": {"enabled": false, "prefixes": []}, "options": {}},
-    "folder_index": {"enabled": true, "depends_on": [], "filter": {"enabled": false, "prefixes": []}, "options": {}},
-    "resource_folders": {"enabled": true, "depends_on": [], "filter": {"enabled": false, "prefixes": []}, "options": {}}
+    "reference_format": {
+      "enabled": true,
+      "depends_on": [
+        "inventory"
+      ],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {}
+    },
+    "reference_targets": {
+      "enabled": true,
+      "depends_on": [
+        "reference_format"
+      ],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {}
+    },
+    "orphan_files": {
+      "enabled": true,
+      "depends_on": [
+        "reference_format"
+      ],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {}
+    },
+    "connectivity": {
+      "enabled": true,
+      "depends_on": [
+        "reference_format"
+      ],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {}
+    },
+    "folder_index": {
+      "enabled": true,
+      "depends_on": [],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {}
+    },
+    "resource_folders": {
+      "enabled": true,
+      "depends_on": [],
+      "filter": {
+        "enabled": false,
+        "prefixes": []
+      },
+      "options": {}
+    }
   }
 }

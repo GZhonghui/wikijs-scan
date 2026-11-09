@@ -26,7 +26,7 @@ from psycopg import sql
 
 from main import FILTER_FORBIDDEN
 from wikijs_scan.config import load_config
-from wikijs_scan.database import load_snapshot
+from wikijs_scan.database import DatabaseError, load_snapshot
 from wikijs_scan.restore import restore_database
 from wikijs_scan.runner import run_scans
 
@@ -78,6 +78,8 @@ class PostgreSQLIntegration(unittest.TestCase):
                     time.sleep(0.25)
             with connection:
                 connection.execute('CREATE EXTENSION ltree')
+                connection.execute('CREATE SCHEMA wiki')
+                connection.execute('SET LOCAL search_path TO wiki, public')
                 connection.execute('''
                     CREATE TABLE sites (id uuid PRIMARY KEY);
                     CREATE TABLE pages (id uuid PRIMARY KEY, path text, title text, content text,
@@ -108,21 +110,32 @@ class PostgreSQLIntegration(unittest.TestCase):
                                    (asset_id, "a.png", 123, b"never selected", b"never selected", site_id))
                 self.insert_tree(connection, site_id, asset_id, "guides/images/a.png", "asset")
                 connection.execute(sql.SQL("CREATE ROLE scan_reader LOGIN PASSWORD {}").format(sql.Literal(reader_password)))
+                connection.execute("GRANT USAGE ON SCHEMA wiki TO scan_reader")
                 connection.execute("GRANT SELECT ON sites, pages, tree TO scan_reader")
                 # 若代码用 SELECT * 或读取媒体字节，这里的权限会使真实查询失败。
                 connection.execute('GRANT SELECT (id,"fileName","fileSize","siteId") ON assets TO scan_reader')
             database = dict(admin, user="scan_reader", password=reader_password,
-                            sslmode="prefer", statement_timeout_ms=5000)
+                            sslmode="prefer", statement_timeout_ms=5000, schema="wiki")
             first = load_snapshot(database)
+            self.assertEqual(load_snapshot({key: value for key, value in database.items() if key != "schema"}), first)
+            with self.assertRaisesRegex(DatabaseError, r"global\.database\.schema"):
+                load_snapshot(dict(database, schema="public"))
             self.assertIn("/empty/", [folder.path for folder in first.folders])
             self.assertEqual(first.assets[0].size, 123)
             with psycopg.connect(**admin) as connection:
-                connection.execute("DELETE FROM tree WHERE tree = 'folder' AND \"fileName\" = 'empty'")
+                connection.execute("DELETE FROM wiki.tree WHERE tree = 'folder' AND \"fileName\" = 'empty'")
             snapshot = load_snapshot(database)
             settings = load_config(PROJECT / "config.json")
             report = run_scans(snapshot, settings, io.StringIO(), io.StringIO(), FILTER_FORBIDDEN)
             self.assertEqual(report.exit_code, 0)
             print("真实 PostgreSQL 元数据读取与全部 12 项扫描通过", flush=True)
+
+            custom_schema = 'Custom."Wiki'
+            with psycopg.connect(**admin) as connection:
+                connection.execute(sql.SQL("ALTER SCHEMA wiki RENAME TO {}").format(sql.Identifier(custom_schema)))
+            database = dict(database, schema=custom_schema)
+            self.assertEqual(load_snapshot(database), snapshot)
+            print("wiki 与自定义 schema 读取通过", flush=True)
 
             docker("stop", source)
             with tempfile.TemporaryDirectory(prefix="wikijs-scan-integration-") as temporary:

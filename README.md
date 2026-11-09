@@ -1,6 +1,6 @@
 # wikijs-scan
 
-面向个人写作规范的 **Wiki.js 3.0.2 数据库扫描工具**，项目目录为 `WikijsCheck/`。
+面向个人写作规范的 **Wiki.js 3.0.2 数据库扫描工具**。
 只读取页面原始 Markdown、目录和资源元数据，不导出文件树、不读取媒体内容。
 各 scan 独立返回结果，由入口按配置顺序执行并统一写日志。
 
@@ -10,7 +10,6 @@
 ## 安装与运行
 
 ```bash
-cd WikijsCheck
 python -m pip install -r requirements.txt
 ```
 
@@ -181,7 +180,7 @@ grid 使用安全 YAML 解析，非空但格式错误、不是列表或缺少字
 ## 结构与扩展
 
 ```text
-WikijsCheck/
+/
 ├── main.py
 ├── restore_database.py
 ├── config.json

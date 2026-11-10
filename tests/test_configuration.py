@@ -25,7 +25,7 @@ class ConfigurationTests(unittest.TestCase):
         config = load_config(PROJECT_DIRECTORY / "config.json")
         specs = {spec.scan_id: spec for spec in config.scans}
         self.assertEqual(set(specs), {
-            "inventory", "resource_location", "resource_size", "duplicate_sizes",
+            "inventory", "resource_location", "resource_size", "duplicate_md5",
             "naming", "forbidden_patterns", "reference_format", "reference_targets",
             "orphan_files", "connectivity", "folder_index", "resource_folders",
         })
@@ -35,7 +35,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue(all(not spec.filter.enabled for spec in config.scans))
         self.assertEqual(config.database["schema"], "wiki")
         self.assertEqual(FILTER_FORBIDDEN, {
-            "inventory", "resource_size", "duplicate_sizes", "forbidden_patterns",
+            "inventory", "resource_size", "duplicate_md5", "forbidden_patterns",
             "reference_format", "resource_folders",
         })
 

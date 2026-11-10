@@ -1,9 +1,10 @@
-"""只读加载 Wiki.js 3.0.2 的页面正文、资源元数据和显式目录。
+"""只读加载 Wiki.js 3.0.2 的页面正文、资源元数据及二进制内容、显式目录。
 
 流程：在一个 REPEATABLE READ、READ ONLY 事务中读取配置 schema 下的 sites/pages/tree/assets，
 验证单站点、en 语言和 Markdown 页面前提，再将 tree.folderPath 的逐段 UTF-8
-十六进制编码还原为路径。页面统一附加 .md，空目录保留；不读取媒体 data/preview，
-不访问文件缓存或存储目标，不修改数据库，也不让各 scan 自行发起 SQL。
+十六进制编码还原为路径。页面统一附加 .md，空目录保留；所有资源内容必须
+保存在 assets.data，读取其原始字节供 MD5 判重。不读取 preview，不访问文件
+缓存或外部存储目标，不修改数据库，也不让各 scan 自行发起 SQL。
 
 结构不完整时明确失败，不用内连接静默丢弃缺失 tree 行的页面或资源。
 字段依据：github.com/requarks/wiki/blob/3.0.2/backend/db/schema.ts
@@ -36,7 +37,7 @@ TREE_SQL = '''
     FROM {schema}.tree WHERE "siteId" = %s ORDER BY "folderPath", "fileName", id
 '''
 ASSET_SQL = '''
-    SELECT id, "fileName" AS file_name, "fileSize" AS file_size
+    SELECT id, "fileName" AS file_name, "fileSize" AS file_size, data
     FROM {schema}.assets WHERE "siteId" = %s ORDER BY id
 '''
 
@@ -140,7 +141,12 @@ def snapshot_from_rows(
             size = asset["file_size"]
             if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 0):
                 raise DatabaseError(f"资源字节数无效：{raw_path} ({size!r})")
-            item = Asset(raw_path, size)
+            content = asset.get("data")
+            if not isinstance(content, bytes):
+                raise DatabaseError(
+                    f"资源二进制内容缺失或无效：{raw_path}；所有资源内容必须存储在 assets.data 中"
+                )
+            item = Asset(raw_path, size, content)
             assets.append(item)
         else:
             raise DatabaseError(f"未知 tree 类型：{kind!r}")

@@ -63,6 +63,21 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("尚未执行或未启用", log)
         self.assertEqual(output, "reference_format：失败\nresource_size：成功\n")
 
+    def test_duplicate_md5_id_reports_content_duplicates(self):
+        config = configuration("duplicate_md5")
+        distinct = Snapshot(assets=(Asset("/a.bin", 3, b"abc"), Asset("/b.bin", 3, b"xyz")))
+        report, log, output = execute(distinct, config)
+        self.assertEqual(report.exit_code, 0)
+        self.assertEqual(output, "duplicate_md5：成功\n")
+        self.assertIn("资源内容重复（MD5）", log)
+
+        duplicate = Snapshot(assets=(Asset("/a.bin", 3, b"abc"), Asset("/b.bin", 3, b"abc")))
+        report, log, output = execute(duplicate, config)
+        self.assertEqual(report.exit_code, 1)
+        self.assertEqual(output, "duplicate_md5：失败\n")
+        self.assertIn("MD5 900150983cd24fb0d6963f7d28e17f72（2 个资源）", log)
+        self.assertIn("/a.bin\n/b.bin", log)
+
     def test_later_prerequisite_does_not_trigger_reordering_or_retry(self):
         config = configuration("reference_format", "inventory", "reference_targets", patches={
             "reference_format": {"depends_on": ["inventory"]},

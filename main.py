@@ -17,7 +17,7 @@ PROJECT_DIRECTORY = Path(__file__).resolve().parent
 
 # 这是规则本身的限制，不是用户可关闭的配置。保留在入口以便集中审阅。
 FILTER_FORBIDDEN = frozenset({
-    "inventory", "resource_size", "duplicate_sizes", "forbidden_patterns",
+    "inventory", "resource_size", "duplicate_md5", "forbidden_patterns",
     "reference_format", "resource_folders",
 })
 

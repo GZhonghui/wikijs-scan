@@ -27,8 +27,10 @@ from psycopg import sql
 from main import FILTER_FORBIDDEN
 from wikijs_scan.config import load_config
 from wikijs_scan.database import DatabaseError, load_snapshot
+from wikijs_scan.models import ScanContext
 from wikijs_scan.restore import restore_database
 from wikijs_scan.runner import run_scans
+from wikijs_scan.scans import duplicate_md5
 
 
 IMAGE = "postgres:18.6-trixie"
@@ -93,7 +95,7 @@ class PostgreSQLIntegration(unittest.TestCase):
                 site_id = uuid.uuid4()
                 connection.execute("INSERT INTO sites VALUES (%s)", (site_id,))
                 pages = {
-                    "home": "[guides](/guides)\n![](/_files/guides/images/a.png)",
+                    "home": "[guides](/guides)\n![](/_files/guides/images/a.png)\n![](/_files/guides/images/b.png)",
                     "guides": "[home](/home)\n[intro](/guides/intro)",
                     "guides/intro": "[guides](/guides)",
                 }
@@ -105,15 +107,17 @@ class PostgreSQLIntegration(unittest.TestCase):
                     self.insert_tree(connection, site_id, record_id, path, "page")
                 for path in ("guides", "guides/images", "empty"):
                     self.insert_tree(connection, site_id, uuid.uuid4(), path, "folder")
-                asset_id = uuid.uuid4()
-                connection.execute('INSERT INTO assets VALUES (%s,%s,%s,%s,%s,%s)',
-                                   (asset_id, "a.png", 123, b"never selected", b"never selected", site_id))
-                self.insert_tree(connection, site_id, asset_id, "guides/images/a.png", "asset")
+                contents = {"a.png": b"\x00\xff\x80a", "b.png": b"\x00\xff\x80b"}
+                for name, content in contents.items():
+                    asset_id = uuid.uuid4()
+                    connection.execute('INSERT INTO assets VALUES (%s,%s,%s,%s,%s,%s)',
+                                       (asset_id, name, len(content), content, b"never selected", site_id))
+                    self.insert_tree(connection, site_id, asset_id, "guides/images/" + name, "asset")
                 connection.execute(sql.SQL("CREATE ROLE scan_reader LOGIN PASSWORD {}").format(sql.Literal(reader_password)))
                 connection.execute("GRANT USAGE ON SCHEMA wiki TO scan_reader")
                 connection.execute("GRANT SELECT ON sites, pages, tree TO scan_reader")
-                # 若代码用 SELECT * 或读取媒体字节，这里的权限会使真实查询失败。
-                connection.execute('GRANT SELECT (id,"fileName","fileSize","siteId") ON assets TO scan_reader')
+                # 允许读取原始内容；若代码用 SELECT * 或读取 preview，真实查询仍会失败。
+                connection.execute('GRANT SELECT (id,"fileName","fileSize","siteId",data) ON assets TO scan_reader')
             database = dict(admin, user="scan_reader", password=reader_password,
                             sslmode="prefer", statement_timeout_ms=5000, schema="wiki")
             first = load_snapshot(database)
@@ -121,14 +125,38 @@ class PostgreSQLIntegration(unittest.TestCase):
             with self.assertRaisesRegex(DatabaseError, r"global\.database\.schema"):
                 load_snapshot(dict(database, schema="public"))
             self.assertIn("/empty/", [folder.path for folder in first.folders])
-            self.assertEqual(first.assets[0].size, 123)
+            self.assertEqual([asset.size for asset in first.assets], [4, 4])
+            self.assertEqual([asset.content for asset in first.assets], list(contents.values()))
             with psycopg.connect(**admin) as connection:
                 connection.execute("DELETE FROM wiki.tree WHERE tree = 'folder' AND \"fileName\" = 'empty'")
             snapshot = load_snapshot(database)
             settings = load_config(PROJECT / "config.json")
             report = run_scans(snapshot, settings, io.StringIO(), io.StringIO(), FILTER_FORBIDDEN)
             self.assertEqual(report.exit_code, 0)
-            print("真实 PostgreSQL 元数据读取与全部 12 项扫描通过", flush=True)
+            print("真实 PostgreSQL 二进制读取、同大小不同内容与全部 12 项扫描通过", flush=True)
+
+            with psycopg.connect(**admin) as connection:
+                connection.execute('UPDATE wiki.assets SET data = %s WHERE "fileName" = %s',
+                                   (contents["a.png"], "b.png"))
+            duplicate = duplicate_md5.run(ScanContext(load_snapshot(database)), {})
+            self.assertFalse(duplicate.success)
+            self.assertIn("MD5", duplicate.log_text)
+            self.assertIn("/guides/images/a.png", duplicate.log_text)
+            self.assertIn("/guides/images/b.png", duplicate.log_text)
+            with psycopg.connect(**admin) as connection:
+                connection.execute('UPDATE wiki.assets SET data = NULL WHERE "fileName" = %s', ("b.png",))
+            with self.assertRaisesRegex(DatabaseError, r"/guides/images/b\.png"):
+                load_snapshot(database)
+            with psycopg.connect(**admin) as connection:
+                connection.execute('UPDATE wiki.assets SET data = %s WHERE "fileName" = %s',
+                                   (contents["b.png"], "b.png"))
+                connection.execute('REVOKE SELECT (data) ON wiki.assets FROM scan_reader')
+            with self.assertRaises(DatabaseError):
+                load_snapshot(database)
+            with psycopg.connect(**admin) as connection:
+                connection.execute('GRANT SELECT (data) ON wiki.assets TO scan_reader')
+            self.assertEqual(load_snapshot(database), snapshot)
+            print("相同内容 MD5 检测、NULL 内容拒绝和 data 列权限验证通过", flush=True)
 
             custom_schema = 'Custom."Wiki'
             with psycopg.connect(**admin) as connection:

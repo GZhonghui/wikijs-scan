@@ -1,4 +1,4 @@
-"""真实字段形状与只读事务边界；测试数据不含任何媒体二进制。"""
+"""真实字段形状、资源二进制内容与只读事务边界。"""
 
 import unittest
 from unittest.mock import patch
@@ -35,17 +35,19 @@ class DatabaseRowsTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(DatabaseError):
                 decode_tree_path(value)
 
-    def test_snapshot_preserves_empty_folders_and_media_size(self):
+    def test_snapshot_preserves_empty_folders_and_media_bytes(self):
         tree = [tree_row("g", "folder", "guides"),
                 tree_row("e", "folder", "empty"),
                 tree_row("p", "page", "guides/intro"),
                 tree_row("a", "asset", "guides/photo.png")]
-        assets = [{"id": "a", "file_name": "photo.png", "file_size": 321}]
+        content = b"\x00\xff\x80" + b"x" * 318
+        assets = [{"id": "a", "file_name": "photo.png", "file_size": 321, "data": content}]
         snapshot = snapshot_from_rows([page_row()], tree, assets)
         self.assertEqual([f.path for f in snapshot.folders], ["/empty/", "/guides/"])
         self.assertEqual(snapshot.pages[0].path, "/guides/intro.md")
         self.assertEqual(snapshot.pages[0].content, "# intro\n")
         self.assertEqual((snapshot.assets[0].path, snapshot.assets[0].size), ("/guides/photo.png", 321))
+        self.assertEqual(snapshot.assets[0].content, content)
 
     def test_same_name_page_and_folder_are_distinct(self):
         snapshot = snapshot_from_rows([page_row(path="guides")],
@@ -62,19 +64,36 @@ class DatabaseRowsTests(unittest.TestCase):
 
     def test_assets_without_size_remain_visible(self):
         snapshot = snapshot_from_rows([], [tree_row("a", "asset", "a.png")],
-                                      [{"id": "a", "file_name": "a.png", "file_size": None}])
+                                      [{"id": "a", "file_name": "a.png", "file_size": None, "data": b"a"}])
         self.assertIsNone(snapshot.assets[0].size)
+        self.assertEqual(snapshot.assets[0].content, b"a")
+
+    def test_empty_binary_content_is_valid(self):
+        snapshot = snapshot_from_rows([], [tree_row("a", "asset", "empty.bin")],
+                                      [{"id": "a", "file_name": "empty.bin", "file_size": 0, "data": b""}])
+        self.assertEqual(snapshot.assets[0].content, b"")
+
+    def test_missing_or_nonbinary_content_fails_without_exposing_it(self):
+        cases = ({}, {"data": None}, {"data": "private-content"}, {"data": 0},
+                 {"data": bytearray(b"private-content")}, {"data": memoryview(b"private-content")})
+        for changes in cases:
+            with self.subTest(changes=changes), self.assertRaises(DatabaseError) as raised:
+                snapshot_from_rows([], [tree_row("a", "asset", "a.bin")],
+                                   [{"id": "a", "file_name": "a.bin", "file_size": 0, **changes}])
+            self.assertIn("/a.bin", str(raised.exception))
+            self.assertIn("assets.data", str(raised.exception))
+            self.assertNotIn("private-content", str(raised.exception))
 
     def test_mismatched_and_missing_records_fail(self):
         cases = [
             ([page_row(path="a")], [], []),
             ([], [tree_row("p", "page", "a")], []),
-            ([], [], [{"id": "a", "file_name": "a.png", "file_size": 1}]),
+            ([], [], [{"id": "a", "file_name": "a.png", "file_size": 1, "data": b"a"}]),
             ([], [tree_row("a", "asset", "a.png")], []),
             ([page_row(path="a")], [tree_row("p", "page", "b")], []),
             ([page_row()], [tree_row("p", "page", "guides/intro")], []),
             ([], [tree_row("a", "asset", "a.png")],
-             [{"id": "a", "file_name": "b.png", "file_size": 1}]),
+             [{"id": "a", "file_name": "b.png", "file_size": 1, "data": b"a"}]),
         ]
         for rows in cases:
             with self.subTest(rows=rows), self.assertRaises(DatabaseError):
@@ -88,10 +107,10 @@ class DatabaseRowsTests(unittest.TestCase):
             snapshot_from_rows([], [tree_row("f", "folder", "a", locale="fr")], [])
 
     def test_duplicate_logical_files_fail(self):
-        with self.assertRaises(DatabaseError):
+        with self.assertRaisesRegex(DatabaseError, "逻辑路径重复"):
             snapshot_from_rows([page_row(path="a")],
                                [tree_row("p", "page", "a"), tree_row("a", "asset", "a.md")],
-                               [{"id": "a", "file_name": "a.md", "file_size": 1}])
+                               [{"id": "a", "file_name": "a.md", "file_size": 1, "data": b"a"}])
 
 
 class FakeConnection:
@@ -123,14 +142,19 @@ class FakeConnection:
 
 
 class DatabaseConnectionTests(unittest.TestCase):
-    def test_one_readonly_snapshot_and_explicit_metadata_columns(self):
+    def test_one_readonly_snapshot_and_explicit_content_columns(self):
         from psycopg import IsolationLevel
 
-        connection = FakeConnection([[{"id": "site"}], [], [], []])
+        content = b"\x00\xff\x80"
+        connection = FakeConnection([
+            [{"id": "site"}], [], [tree_row("a", "asset", "a.bin")],
+            [{"id": "a", "file_name": "a.bin", "file_size": len(content), "data": content}],
+        ])
         with patch("psycopg.connect", return_value=connection) as connect:
             snapshot = load_snapshot({"host": "localhost", "port": 55432, "dbname": "wiki",
                                       "user": "wikijs", "password": "secret", "statement_timeout_ms": 1234})
-        self.assertFalse(snapshot.file_paths)
+        self.assertEqual(snapshot.file_paths, {"/a.bin"})
+        self.assertEqual(snapshot.assets[0].content, content)
         self.assertTrue(connection.closed)
         self.assertEqual(connection.isolation_level, IsolationLevel.REPEATABLE_READ)
         self.assertEqual(connection.queries[0][1], ("1234",))
@@ -139,7 +163,7 @@ class DatabaseConnectionTests(unittest.TestCase):
                           for query in (SITE_SQL, PAGE_SQL, TREE_SQL, ASSET_SQL)])
         self.assertNotIn("statement_timeout_ms", connect.call_args.kwargs)
         self.assertNotIn("*", ASSET_SQL)
-        self.assertNotIn("data", ASSET_SQL.lower())
+        self.assertRegex(ASSET_SQL.lower(), r"\bdata\b")
         self.assertNotIn("preview", ASSET_SQL.lower())
 
     def test_all_tables_use_the_exact_configured_schema(self):

@@ -1,10 +1,11 @@
 # wikijs-scan
 
 面向个人写作规范的 **Wiki.js 3.0.2 数据库扫描工具**。
-只读取页面原始 Markdown、目录和资源元数据，不导出文件树、不读取媒体内容。
+只读加载页面原始 Markdown、目录、资源元数据及资源二进制内容，不导出文件树。
 各 scan 独立返回结果，由入口按配置顺序执行并统一写日志。
 
-要求 Python 3.11+、PostgreSQL 18；数据库只有一个站点，内容语言为 `en`，页面全部为 Markdown。
+要求 Python 3.11+、PostgreSQL 18；数据库只有一个站点，内容语言为 `en`，页面全部为 Markdown，
+所有资源的完整二进制内容都保存在数据库的 `assets.data` 中。
 不符合这些前提或目录数据不完整时，程序明确失败，不把未扫描的数据当作正常结果。
 
 ## 安装与运行
@@ -118,7 +119,7 @@ python restore_database.py /path/to/wiki-prod_db-data.tar.gz
 | `inventory` | 统计目录、空目录、各后缀数量；空目录或无后缀文件失败 | 否 | — |
 | `resource_location` | 图片必须直接在 images 下，其他资源直接在 docs 下 | 是 | — |
 | `resource_size` | 资源超过 `max_bytes` 失败，默认 1,048,576 字节（1 MiB） | 否 | — |
-| `duplicate_sizes` | 多个资源具有完全相同字节数时失败，列出各组 | 否 | — |
+| `duplicate_md5` | 多个资源的二进制内容具有相同 MD5 时失败，列出摘要和各组全部路径 | 否 | — |
 | `naming` | 页面/目录 title 等于末级名称，且名称只含 `[a-z0-9-]+` | 是 | — |
 | `forbidden_patterns` | 原始页面全文命中配置中的正则即失败 | 否 | — |
 | `reference_format` | 引用格式错误、block 相对路径、自引用或 block 解析失败 | 否 | `inventory` |
@@ -138,7 +139,11 @@ python restore_database.py /path/to/wiki-prod_db-data.tar.gz
   JSON 中反斜杠需双写，示例已在默认配置中。默认大小写敏感，扫描包含代码块和注释的原始全文，报告行列及有限预览。
 - 其他项的 `options` 为 `{}`。
 
-相同大小只说明可能重复，扫描按个人规范判失败，并不比较媒体内容。
+`duplicate_md5` 按资源二进制内容计算 MD5 并判重。
+相同 MD5 的资源作为疑似重复项报告；同样大小但 MD5 不同的资源通过此项检查。
+判重不依赖大小元数据，大小阈值仍由 `resource_size` 独立检查。
+空二进制内容是合法的空文件，多个空文件具有相同 MD5，也会被报告为重复。
+页面不参与资源判重。
 根目录 `/` 不算文件夹。文件后缀按最后一个点判断，`.tar.gz` 归入 `.gz`。
 `/a.md` 是 `/a/` 的同名页面，不是它的内部文件；`/a/` 没有实际子项时仍是空目录。
 
@@ -192,9 +197,14 @@ grid 使用安全 YAML 解析，非空但格式错误、不是列表或缺少字
 遇到表不存在错误时，检查数据库名和 schema 是否与恢复的原库一致。
 页面正文来自 `pages.content`，目录由 tree 显式记录构建，
 `folderPath` 的每级十六进制编码先还原为 UTF-8。页面路径统一追加逻辑 `.md` 后缀。
-上传资源保持 Asset 身份，即使其后缀为 `.md`，也不会读取媒体正文。
+资源二进制内容来自 `assets.data`，保存在内存快照的 `Asset.content` 中，用于计算 MD5。
+页面与资源按 `tree.tree` 的 `page` / `asset` 类型及对应的 `pages` / `assets` 记录区分，不按文件后缀推断。
+MD5 判重仅包含数据库中实际登记为 `asset` 的资源；页面不参与。
+资源的 `data` 缺失、为 `NULL` 或不是二进制时，快照加载明确失败；空二进制内容不属于缺失。
+只读账号需要上述查询列的 `SELECT` 权限，其中包括 `assets.data`；不读取 `assets.preview`。
+完整二进制内容会增加数据库传输量和内存占用，运行时应为全部资源内容预留内存。
 
-该工具判断的是数据库中登记的内容，不验证外部存储中的媒体字节是否仍存在，
+该工具以数据库中的完整资源内容为数据来源，不访问文件缓存或外部存储，
 也不扫描页面历史、权限可见性或 HTML 编辑器内容。Markdown lint 按方案暂不实现。
 
 实现依据：[数据库 schema](https://github.com/requarks/wiki/blob/3.0.2/backend/db/schema.ts)、
@@ -248,5 +258,6 @@ python tests/integration_postgres.py
 ```
 
 此测试只创建随机命名的测试容器和卷，使用官方 PG18 镜像，验证真实 SQL、
-`wiki` 与自定义 schema、禁止读取媒体列的账号权限、全部 scan、停库备份与恢复后的快照一致性。
+`wiki` 与自定义 schema、允许读取资源 `data` 但禁止读取 `preview` 的账号权限、
+全部 scan、停库备份与恢复后的快照一致性。
 结束后清理本次测试资源；不使用 `config.json` 中的数据库连接，不接触已有数据库。

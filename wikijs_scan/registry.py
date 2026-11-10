@@ -5,7 +5,7 @@ from typing import Callable
 
 from .models import ScanContext, ScanResult
 from .scans import (
-    connectivity, duplicate_sizes, folder_index, forbidden_patterns, inventory,
+    connectivity, duplicate_md5, folder_index, forbidden_patterns, inventory,
     naming, orphan_files, reference_format, reference_targets, resource_folders,
     resource_location, resource_size,
 )
@@ -22,7 +22,7 @@ SCANS = {
     "inventory": ScanDefinition("目录与文件统计", inventory.run, inventory.validate_options),
     "resource_location": ScanDefinition("资源文件位置", resource_location.run, resource_location.validate_options),
     "resource_size": ScanDefinition("资源文件大小", resource_size.run, resource_size.validate_options),
-    "duplicate_sizes": ScanDefinition("资源大小重复", duplicate_sizes.run, duplicate_sizes.validate_options),
+    "duplicate_md5": ScanDefinition("资源内容重复（MD5）", duplicate_md5.run, duplicate_md5.validate_options),
     "naming": ScanDefinition("标题与路径命名", naming.run, naming.validate_options),
     "forbidden_patterns": ScanDefinition("禁止词语与格式", forbidden_patterns.run, forbidden_patterns.validate_options),
     "reference_format": ScanDefinition("引用格式与自引用", reference_format.run, reference_format.validate_options),

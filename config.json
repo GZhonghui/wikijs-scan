@@ -30,7 +30,7 @@
       "inventory",
       "resource_location",
       "resource_size",
-      "duplicate_sizes",
+      "duplicate_md5",
       "naming",
       "forbidden_patterns",
       "reference_format",
@@ -80,7 +80,7 @@
         "max_bytes": 1048576
       }
     },
-    "duplicate_sizes": {
+    "duplicate_md5": {
       "enabled": true,
       "depends_on": [],
       "filter": {

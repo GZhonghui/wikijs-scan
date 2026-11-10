@@ -6,7 +6,7 @@ import unittest
 
 from wikijs_scan.models import Asset, Folder, GlobalSettings, Page, ScanContext, Snapshot
 from wikijs_scan.scans import (
-    duplicate_sizes,
+    duplicate_md5,
     folder_index,
     forbidden_patterns,
     inventory,
@@ -124,31 +124,77 @@ class ResourceSizeTests(unittest.TestCase):
                 resource_size.validate_options({"max_bytes": value})
 
 
-class DuplicateSizesTests(unittest.TestCase):
-    def test_all_equal_sizes_are_grouped_regardless_of_names_or_types(self):
-        result = duplicate_sizes.run(context(assets=[
-            Asset("/b.jpg", 12), Asset("/a.pdf", 12), Asset("/unique.png", 13),
-            Asset("/zero-a.txt", 0), Asset("/zero-b.bin", 0),
+class DuplicateContentTests(unittest.TestCase):
+    def test_same_content_is_grouped_regardless_of_names_or_types(self):
+        result = duplicate_md5.run(context(assets=[
+            Asset("/b.jpg", 3, b"abc"), Asset("/a.pdf", 3, b"abc"),
+            Asset("/c.bin", 3, b"abc"), Asset("/unique.png", 3, b"xyz"),
         ]), {})
         self.assertFalse(result.success)
-        self.assertIn("12 字节（2 个资源）", result.log_text)
-        self.assertIn("/a.pdf\n/b.jpg", result.log_text)
-        self.assertIn("0 字节（2 个资源）", result.log_text)
+        self.assertIn("MD5 900150983cd24fb0d6963f7d28e17f72（3 个资源）", result.log_text)
+        self.assertIn("/a.pdf\n/b.jpg\n/c.bin", result.log_text)
         self.assertNotIn("/unique.png", result.log_text)
 
-    def test_unknown_sizes_are_errors_not_duplicate_zeroes(self):
-        result = duplicate_sizes.run(context(assets=[
-            Asset("/missing-a.bin", None), Asset("/missing-b.bin", None), Asset("/zero.bin", 0),
+    def test_same_size_with_different_content_is_silent(self):
+        result = duplicate_md5.run(context(assets=[
+            Asset("/a.bin", 1, b"a"), Asset("/b.bin", 1, b"b"),
         ]), {})
-        self.assertFalse(result.success)
-        self.assertIn("/missing-a.bin", result.log_text)
-        self.assertIn("/missing-b.bin", result.log_text)
-        self.assertNotIn("0 字节（", result.log_text)
-
-    def test_unique_sizes_are_silent(self):
-        result = duplicate_sizes.run(context(assets=[Asset("/a.bin", 1), Asset("/b.bin", 2)]), {})
         self.assertTrue(result.success)
         self.assertEqual(result.log_text, "")
+
+    def test_hashes_raw_binary_without_text_decoding(self):
+        result = duplicate_md5.run(context(assets=[
+            Asset("/a.bin", 2, b"\x00\xff"), Asset("/b.bin", 2, b"\x00\xff"),
+            Asset("/different.bin", 2, b"\xff\x00"),
+        ]), {})
+        self.assertFalse(result.success)
+        self.assertIn("/a.bin\n/b.bin", result.log_text)
+        self.assertNotIn("/different.bin", result.log_text)
+
+    def test_empty_files_form_a_valid_duplicate_group(self):
+        result = duplicate_md5.run(context(assets=[
+            Asset("/zero-a.txt", 0, b""), Asset("/zero-b.bin", 0, b""),
+        ]), {})
+        self.assertFalse(result.success)
+        self.assertEqual(result.log_text,
+                         "MD5 d41d8cd98f00b204e9800998ecf8427e（2 个资源）：\n/zero-a.txt\n/zero-b.bin")
+
+    def test_missing_or_invalid_content_is_not_treated_as_empty(self):
+        result = duplicate_md5.run(context(assets=[
+            Asset("/missing.bin", 0), Asset("/invalid.bin", 3, "abc"),
+            Asset("/zero.bin", 0, b""),
+        ]), {})
+        self.assertFalse(result.success)
+        self.assertIn("/missing.bin：资源二进制内容缺失或无效", result.log_text)
+        self.assertIn("/invalid.bin：资源二进制内容缺失或无效", result.log_text)
+        self.assertNotIn("/zero.bin", result.log_text)
+        self.assertNotIn("abc", result.log_text)
+        self.assertNotIn("（2 个资源）", result.log_text)
+
+    def test_size_metadata_does_not_hide_duplicate_content(self):
+        result = duplicate_md5.run(context(assets=[
+            Asset("/missing-size.bin", None, b"abc"), Asset("/wrong-size.bin", 100, b"abc"),
+        ]), {})
+        self.assertFalse(result.success)
+        self.assertIn("MD5 900150983cd24fb0d6963f7d28e17f72（2 个资源）", result.log_text)
+        self.assertIn("/missing-size.bin\n/wrong-size.bin", result.log_text)
+
+    def test_pages_do_not_participate_in_resource_duplicates(self):
+        result = duplicate_md5.run(context(
+            pages=[Page("/a.md", "a", "abc"), Page("/b.md", "b", "abc")],
+            assets=[Asset("/upload.md", 3, b"abc")],
+        ), {})
+        self.assertTrue(result.success)
+        self.assertEqual(result.log_text, "")
+
+    def test_group_and_path_order_does_not_depend_on_input_order(self):
+        assets = [Asset("/z.bin", 0, b""), Asset("/b.bin", 3, b"abc"),
+                  Asset("/y.bin", 0, b""), Asset("/a.bin", 3, b"abc")]
+        first = duplicate_md5.run(context(assets=assets), {})
+        second = duplicate_md5.run(context(assets=reversed(assets)), {})
+        self.assertEqual(first, second)
+        self.assertIn("/a.bin\n/b.bin", first.log_text)
+        self.assertIn("/y.bin\n/z.bin", first.log_text)
 
 
 class NamingTests(unittest.TestCase):
@@ -270,7 +316,7 @@ class ResourceFoldersTests(unittest.TestCase):
 
 class ModuleContractTests(unittest.TestCase):
     MODULES = (
-        inventory, resource_location, resource_size, duplicate_sizes,
+        inventory, resource_location, resource_size, duplicate_md5,
         naming, forbidden_patterns, folder_index, resource_folders,
     )
 
@@ -283,7 +329,7 @@ class ModuleContractTests(unittest.TestCase):
     def test_scans_are_silent_and_do_not_modify_shared_snapshot(self):
         scan_context = context(
             pages=[Page("/home.md", "home", "DOKU2MD_REVIEW")],
-            assets=[Asset("/images/a.png", 1), Asset("/images/b.png", 1)],
+            assets=[Asset("/images/a.png", 1, b"a"), Asset("/images/b.png", 1, b"a")],
             folders=[Folder("/images/", "images")],
         )
         before = repr(scan_context)

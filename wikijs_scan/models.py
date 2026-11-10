@@ -5,7 +5,7 @@
 避免把上传的同后缀资源误当作可以读取正文的页面。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,8 @@ class Page:
 class Asset:
     path: str
     size: int | None
+    # 数据库加载要求内容完整；None 只用于构造未携带内容的快照，不能参与判重。
+    content: bytes | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
